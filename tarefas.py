@@ -1,689 +1,1305 @@
-import time
-import re
 import os
-import pyperclip
-import pandas as pd
+import re
+import sys
+import time
 from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import pyperclip
 from openpyxl import Workbook, load_workbook
 from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    StaleElementReferenceException,
+    TimeoutException,
+)
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.firefox.service import Service
-from selenium.common.exceptions import NoSuchElementException
-from selenium.common.exceptions import TimeoutException
-#Este é um código de manipulção para a tarefa "Visualizar exepediente DJE"
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
-class Inicial:
 
-    # Login do usuário 
-    def login(self, usuario, senha):
-        servicoF = Service(executable_path='geckodriver.exe')
-        navegador = webdriver.Firefox(service=servicoF)
-        wait = WebDriverWait(navegador, 20)
-        
-        # Abrindo o PJE de treinamento
-        navegador.get("https://pje.tre-pb.jus.br/pje/login.seam")
+# ============================================================
+# CONFIGURAÇÕES GERAIS
+# ============================================================
 
-        try:
-            wait = WebDriverWait(navegador, 10)
-            wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ssoFrame')))
-            print("Entrou no iframe com sucesso.")
-        except TimeoutException:
-            print("Iframe 'ssoFrame' não encontrado. Continuando sem mudar para ele.")
+URL_PJE = "https://pje.tre-pb.jus.br/pje/login.seam"
+URL_DJE = "https://dje-consulta.tse.jus.br/#/dje/calendario?trib=TRE-PB"
 
-        # Realiza o login
-        user = navegador.find_element(By.XPATH, '//*[@id="username"]')
-        user.send_keys(usuario)
-        pssw = navegador.find_element(By.XPATH, '//*[@id="password"]')
-        pssw.send_keys(senha)
-        navegador.find_element(By.XPATH, '//input[@value="Entrar"]').click()
+TEMPO_ESPERA_PADRAO = 10
+TEMPO_ESPERA_LOGIN = 20
+TEMPO_CLICK = 0.7
+TEMPO_TROCA_ABA = 0.7
 
-        navegador.switch_to.default_content()
-        time.sleep(3)
+PADRAO_NUMERO_PROCESSO = (
+    r"\d{7}-\d{2}\.\d{4}\.\d{1}\.\d{2}\.\d{4}"
+)
 
-        # Pula a verificação do mobile caso exista
-        try:
-            elemento = navegador.find_element(By.XPATH, '/html/body/div[5]/div/div/div/div[2]/div/div/div/form/div/div[2]/div[4]/a')
-            elemento.click()
-        except NoSuchElementException:
-            print("Elemento não encontrado, prosseguindo.")
+PERFIS_GABINETES = {
+    1: "GABJ01 - Gabinete Jurista 1 / Assessoria / Assessor Chefe",
+    2: "GABJ02 - Gabinete Juiz de Direito 1 / Assessoria / Assessor Chefe",
+    3: "GABJ03 - Gabinete Jurista 2 / Assessoria / Assessor Chefe",
+    4: "GABJ04 - Gabinete Juiz de Direito 2 / Assessoria / Assessor Chefe",
+    5: "GABJ05 - Gabinete Vice Presidência / Assessoria / Assessor Chefe",
+    6: "GABJ06 - Gabinete Juiz Federal / Assessoria / Assessor Chefe",
+}
 
-        return navegador
 
-class Tarefa_visualizaDJE:
-    
-    # Comparação das datas
-    def compara_data(self, data_processo, data_comp):
-        if data_processo <= data_comp:
-            return(True)
-        else:
-            return(False)
-    
-    # Salva os arquivos que foram finalizados da tarefa
-    def log_processos(self, numero_processo, data_atual):
-        print("entrei")
-        nome_arquivo = f"processos_manipulados_{data_atual}.txt"
-        caminho_arquivo = os.path.join(os.getcwd(), nome_arquivo)
+# ============================================================
+# FUNÇÕES AUXILIARES
+# ============================================================
 
-        with open(caminho_arquivo, 'a') as arquivo:
-            arquivo.write(f"{numero_processo}\n")
+def caminho_base() -> Path:
+    """
+    Retorna a pasta do programa.
 
-        print(f"Processo {numero_processo} salvo em {nome_arquivo}.")
+    Funciona tanto durante a execução pelo Python quanto em um
+    executável criado pelo PyInstaller.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
 
-    def executa(self, navegador):
-        wait = WebDriverWait(navegador, 10)
-        self.perfil(wait, navegador)
-        self.tarefa(wait, navegador)
+    return Path(__file__).resolve().parent
 
-        navegador.quit()
-        return "-----Executei a tarefa-----"
 
-    # Seleção do perfil adequado para a tarefa
-    def perfil(self, wait, navegador):
-        # Seleção do perfil
-        wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-        navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-        navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('coordenador de processamento')
-        time.sleep(2)
+def caminho_arquivo(nome: str) -> Path:
+    """Monta o caminho absoluto de um arquivo do projeto."""
+    return caminho_base() / nome
 
-        try:
-            perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-            texto_completo = perfil.text
-        except NoSuchElementException:
-            texto_completo = " "
-            print("Elemento não encontrado.")
-       
-        if "Coordenador de Processamento" in texto_completo:
-            navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()                   
- 
-    # Seleção da tarefa
-    def tarefa(self, wait, navegador):
-        abas = navegador.window_handles
-        # Ajusta o ambiente para a abertura da tarefa
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame')))
-        #print("iFrame carregado. Contexto mudado para o iFrame.")
-        time.sleep(2)
 
-        # Entra na tarefa
-        i = 1
-        while(i):
-            xpath_tarefa = f'/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[3]/div[{i}]/div/a/div/span[1]'
-            processo_elemento = wait.until(EC.presence_of_element_located((By.XPATH, xpath_tarefa)))
-            texto_completo = processo_elemento.text.strip()
-            texto = re.match(r'^[^\d]*', texto_completo).group().strip()
+def criar_wait(navegador, tempo=TEMPO_ESPERA_PADRAO) -> WebDriverWait:
+    """Cria uma espera explícita para o navegador informado."""
+    return WebDriverWait(navegador, tempo)
 
-            if(texto == "Visualizar expediente DJE"):
-                elemento = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_tarefa)))
-                navegador.execute_script("arguments[0].click();", elemento)#clica para entrar na tarefa
-                break    
-            
-            i += 1
 
-        time.sleep(2)
+def clicar_js(
+        navegador,
+        elemento,
+        pausa=TEMPO_CLICK,
+        rolar=False
+    ):
+        """
+        Clica em um elemento com uma pequena pausa.
 
-        # Abertura do DJE
-        navegador.execute_script("window.open('');")
-        novas_abas = navegador.window_handles
-        if len(novas_abas) > len(abas):
-            navegador.switch_to.window(novas_abas[-1])
-            navegador.get("https://dje-consulta.tse.jus.br/#/dje/calendario?trib=TRE-PB")
-            time.sleep(1)
-            navegador.switch_to.window(novas_abas[0])
-            abas = navegador.window_handles
-        else:
-            print("Erro ao abrir o DJE")
-        
-        print("Voltei pro PJE")
+        O scroll só acontece quando rolar=True.
+        """
+        if rolar:
+            navegador.execute_script(
+                """
+                arguments[0].scrollIntoView({
+                    block: 'center',
+                    inline: 'center'
+                });
+                """,
+                elemento
+            )
+            time.sleep(pausa)
 
-        # Seleciona a quantidade de processos para rodar
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame')))
-        processo_elemento = wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[1]/div[1]/filtro-tarefas/div/div[1]/div[2]/span')))
-        texto_completo = processo_elemento.text
-        qntd_processos_match = re.search(r'\d+', texto_completo)
-
-        if qntd_processos_match:
-            i = j = 1
-            qntd_processo = int(qntd_processos_match.group())
-            print(f"Quantidade de processos: {qntd_processo}")
-            
-            while(i <= qntd_processo):
-                print(f"Processo {i}")
-                #print(f"xpath {j}")
-                #seleciona o xapth dos processos
-                xpath_processo = f'/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[1]/div[2]/div/div[1]/p-datalist/div/div/ul/li[{j}]/processo-datalist-card/div/div[3]/a/div/span[2]'
-                processo_elemento = wait.until(EC.presence_of_element_located((By.XPATH, xpath_processo)))
-                texto_completo = processo_elemento.text 
-                #print(f"{texto_completo}") 
-                
-                try:
-                    j = self.visualizarExpedienteDJE(wait, navegador, abas, xpath_processo, j)
-                    #print(f"xpath {j}")
-                    print(f"Abri {i}")
-                except Exception as e:
-                    time.sleep(5)                     
-                    print(f"Erro ao abrir o processo {i}.")
-                    print(f"-----------------Tente manipular esse processo manualmente-----------------")
-                    break
-
-                time.sleep(2)
-                i = i + 1
-                
-                if (i == qntd_processo):
-                    print("-----------------Todos os processos foram percorridos com sucesso-----------------")
-        else:
-            print("-----------------Quantidade de processos não encontrada.-----------------")
-
-    # Verificação no DJE
-    def verificaDJE(self, wait, navegador, abas, numero_processo):
-        navegador.switch_to.window(abas[-1])
-        time.sleep(0.5)
-        # Definição de valor de data default
-        data_default = datetime(2001, 5, 17)
-
-        # Busca pelo pdf
-        # navegador.find_element('xpath', '/html/body/app-root/div/app-calendario/div/div[1]/div[2]/div[2]/button').click()
-        # time.sleep(20)
-
-        # Seleciona o TRE-PB
-        navegador.find_element('xpath', '/html/body/app-root/div/app-calendario/div/div[2]/app-pesquisa/app-pesquisa-form/div/div[1]/div[1]/mat-form-field/div/div[1]/div[3]').click()
-        navegador.find_element('xpath', '/html/body/div[2]/div[2]/div/div/div/mat-option[17]/span').click()
-
-        #print(f"processo: {numero_processo}")
-
-        # Preenche o número do processo
-        pyperclip.copy(numero_processo) 
-        input_element = navegador.find_element('xpath', '//*[@id="mat-input-0"]')
-        input_element.clear() 
-        input_element.send_keys(Keys.CONTROL, 'v')
-
-        time.sleep(0.5)
-
-        # Clica para pesquisar
-        navegador.find_element('xpath', '/html/body/app-root/div/app-calendario/div/div[2]/app-pesquisa/app-pesquisa-form/div/div[5]/button[2]').click()
-        time.sleep(8)
-
-        # Salva a data
-        try:
-            data_elemento = wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/app-root/div/app-calendario/div/div[8]/button/span')))
-            texto_completo = data_elemento.text
-            data_publicacao_match = re.search(r'\d{2}/\d{2}/\d{4}', texto_completo)
-            if data_publicacao_match:
-                data_publicacao = data_publicacao_match.group()  # Acessar o grupo da correspondência
-                print(f"-----------------Data da publicação: {data_publicacao}-----------------")
-                data_publicacao = datetime.strptime(data_publicacao, '%d/%m/%Y')
-        except Exception as e:                     
-            print("-----------------Data não encontrada.-----------------")
-            data_publicacao = data_default
-
-        navegador.switch_to.window(abas[0])
-        return(data_publicacao)
-
-    # Manipulação de cada processo na tarefa
-    def visualizarExpedienteDJE(self, wait, navegador, abas, xpath_processo, j):
-        
-        # Manipulação da janela utilizada 
-        navegador.switch_to.window(navegador.window_handles[0]) #garante que o programa está operando a aba correta
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame'))) #verificar se o iframe está ativo e o conteúdo está carregado
-        #print("iFrame OK.")
-
-        # Processo a ser verificado
-        elemento = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_processo)))
-        navegador.execute_script("arguments[0].click();", elemento)
-        print(f"XPath do processo atual: {xpath_processo}")
-
-        # Copia o número no processo
-        processo_elemento = wait.until(EC.presence_of_element_located((By.XPATH, xpath_processo)))
-        texto_completo = processo_elemento.text
-        numero_processo_match = re.search(r'\d{7}-\d{2}\.\d{4}\.\d{1}\.\d{2}\.\d{4}', texto_completo)
-        if numero_processo_match:
-            numero_processo = numero_processo_match.group()
-            print(f"-----------------Número do Processo: {numero_processo}-----------------")
-        else:
-            print("-----------------Número do processo não encontrado.-----------------")
-        
-        time.sleep(2)
-
-        # Abertura dos autos
-        elemento = wait.until(EC.element_to_be_clickable((By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[2]/conteudo-tarefa/div[1]/div/div/div[2]/button[3]/i')))
-        navegador.execute_script("arguments[0].click();", elemento)
-
-        # Aguarda a abertura de uma nova aba
-        time.sleep(2) 
-        novas_abas = navegador.window_handles
-
-        # Verificação da quantidade de abas para a mudança de aba correta
-        if len(novas_abas) > len(abas):
-            navegador.switch_to.window(novas_abas[1])
-            print("Nova aba aberta e foco trocado para a nova aba.")
-        else:
-            print("Não foi possível abrir uma nova aba.")
-
-        # Abre os expedientes
-        elemento = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="navbar:linkAbaExpedientes1"]')))
-        navegador.execute_script("arguments[0].click();", elemento)
-
-        # Salva a data do expediente
-        ind = 1
-        while(ind):
-            data_elemento = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/div[1]/div[2]/div[2]/table/tbody/tr[2]/td/table/tbody/tr/td/div/div/div/div/div/div[2]/span/div/table/tbody/tr[{ind}]/td[1]/span/div/span/div[2]')))
-            texto_completo = data_elemento.text
-            
-            if "Diário Eletrônico" in texto_completo:
-                data_processo_match = re.search(r'\d{2}/\d{2}/\d{4}', texto_completo)
-                if data_processo_match:
-                    data_processo = data_processo_match.group()  # Acessar o grupo da correspondência
-                    print(f"-----------------Data do expediente: {data_processo}-----------------")
-                    time.sleep(5)
-                    data_processo = datetime.strptime(data_processo, '%d/%m/%Y')
-                    break
-                else:
-                    print("-----------------Data não encontrada.-----------------")
-                    break
-            else:
-                ind = ind + 1
-
-        # Fecha a aba dos expedientes e retoma a manipulação da aba da tarefa no PJE
-        time.sleep(1)
-        navegador.close()
-        time.sleep(1)
-        abas = navegador.window_handles
-        navegador.switch_to.window(abas[0])
-        time.sleep(1)
-
-        data_comp = self.verificaDJE(wait, navegador, abas, numero_processo)
-        decisao = self.compara_data(data_processo, data_comp)
-        print(decisao)
-
-        # Determina se o processo deve ser finalizado na tarefa ou se ainda deve continuar
-        if(decisao):
-            time.sleep(2)
-            navegador.switch_to.window(abas[0])
-            wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame'))) 
-            #print("iFrame OK.")
-            
-            # Finaliza a tarefa
-            elemento = wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="btnTransicoesTarefa"]')))
-            navegador.execute_script("arguments[0].click();", elemento)
-            elemento = wait.until(EC.element_to_be_clickable((By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[2]/conteudo-tarefa/div[1]/div/div/div[2]/div[2]/ul/li/a')))
-            navegador.execute_script("arguments[0].click();", elemento)
-            data_atual = datetime.now().strftime("%d-%m-%Y")
-            print(data_atual)
-            self.log_processos(numero_processo, data_atual)
-            print("salvei")
-            time.sleep(10)
-            return j
-        else:
-            time.sleep(2)
-            navegador.switch_to.window(abas[0])
-            wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame')))
-            #print("iFrame OK.")
-            time.sleep(2)
-            print(f"-----------------Processo {numero_processo} não publicado-----------------")
-            return j + 1  
-
-class Etiqueta_meta2_70:
-
-    def executa(self, navegador):
-        wait = WebDriverWait(navegador, 10)
-        
-        for gab in range(1, 7):
-            processos = self.manipula_planilha(gab)
-            self.seleciona_gabinete(wait, navegador, gab)
-            flag = 1
-
-            for numero in processos:
-                print(flag)
-                print(numero)
-                flag = self.pesquisa_processo(wait, navegador, numero, flag) 
-                
-        navegador.quit()
-        return "-----Executei a tarefa-----"
-    
-    # Seleciona o gabinete para realizar a pesquisa
-    def seleciona_gabinete(self, wait, navegador, gab):
-    
-        if gab == 1:
-            # Seleção do perfil
-            wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('GABJ01 - Gabinete Jurista 1 / Assessoria / Assessor Chefe')
-            time.sleep(2)
-
-            try:
-                perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-                texto_completo = perfil.text
-            except NoSuchElementException:
-                texto_completo = " "
-                print("Elemento não encontrado.")
-
-            if "Assessor Chefe" in texto_completo:
-                navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()
-                print("Entrei no GABJ01")
-                time.sleep(5)
-        
-        elif gab == 2:
-            # Seleção do perfil
-            wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('GABJ02 - Gabinete Juiz de Direito 1 / Assessoria / Assessor Chefe')
-            time.sleep(2)
-
-            try:
-                perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-                texto_completo = perfil.text
-            except NoSuchElementException:
-                texto_completo = " "
-                print("Elemento não encontrado.")
-
-            if "Assessor Chefe" in texto_completo:
-                navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()
-                print("Entrei no GABJ02")
-                time.sleep(5)
-
-        elif gab == 3:
-            # Seleção do perfil
-            wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('GABJ03 - Gabinete Jurista 2 / Assessoria / Assessor Chefe')
-            time.sleep(2)
-
-            try:
-                perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-                texto_completo = perfil.text
-            except NoSuchElementException:
-                texto_completo = " "
-                print("Elemento não encontrado.")
-
-            if "Assessor Chefe" in texto_completo:
-                navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()
-                print("Entrei no GABJ03")
-                time.sleep(5)
-
-        elif gab == 4:
-            # Seleção do perfil
-            wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('GABJ04 - Gabinete Juiz de Direito 2 / Assessoria / Assessor Chefe')
-            time.sleep(2)
-
-            try:
-                perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-                texto_completo = perfil.text
-            except NoSuchElementException:
-                texto_completo = " "
-                print("Elemento não encontrado.")
-
-            if "Assessor Chefe" in texto_completo:
-                navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()
-                print("Entrei no GABJ04")
-                time.sleep(5)
-        
-        elif gab == 5:
-            # Seleção do perfil
-            wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('GABJ05 - Gabinete Vice Presidência / Assessoria / Assessor Chefe')
-            time.sleep(2)
-
-            try:
-                perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-                texto_completo = perfil.text
-            except NoSuchElementException:
-                texto_completo = " "
-                print("Elemento não encontrado.")
-
-            if "Assessor Chefe" in texto_completo:
-                navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()
-                print("Entrei no GABJ05")
-                time.sleep(5)
-
-        elif gab == 6:
-            # Seleção do perfil
-            wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[2]/ul/li/a')))
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/a').click()
-            navegador.find_element(By.XPATH, '/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[1]/tbody/tr/td/input').send_keys('GABJ06 - Gabinete Juiz Federal / Assessoria / Assessor Chefe')
-            time.sleep(2)
-
-            try:
-                perfil = wait.until(EC.presence_of_element_located((By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a')))
-                texto_completo = perfil.text
-            except NoSuchElementException:
-                texto_completo = " "
-                print("Elemento não encontrado.")
-
-            if "Assessor Chefe" in texto_completo:
-                navegador.find_element(By.XPATH, f'/html/body/nav/div/div[2]/ul/li/div/form/div/div/table[2]/tbody/tr/td[2]/a').click()
-                print("Entrei no GABJ06")
-                time.sleep(5)
-
-    # Pesquisa o processo dentro do gabinete
-    def pesquisa_processo(self, wait, navegador, numero, flag):
-        
-        verifica = False #variável para verificar a presença do processo no gabinete
-        
-        #wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame')))
-        #print("iFrame carregado. Contexto mudado para o iFrame.")
-        time.sleep(1)
-        print("ok")
-        if(flag == 1):
-            navegador.switch_to.default_content()
-            wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame')))
-            print("iFrame carregado. Contexto mudado para o iFrame.")
-            navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[1]/div').click()
-            print("filtro")
-
-        time.sleep(2)
-        print(numero)
-        #campo = navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[2]/filtro-tarefas-pendentes/div/form/fieldset/div[1]/input').send_keys(numero)
-        
-        campo = WebDriverWait(navegador, 10).until(
-            EC.presence_of_element_located((By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[2]/filtro-tarefas-pendentes/div/form/fieldset/div[1]/input'))
+        navegador.execute_script(
+            "arguments[0].click();",
+            elemento
         )
 
-        # Limpa o campo
-        campo.clear()
+        time.sleep(pausa)
 
-        # Insere o novo texto
-        campo.send_keys(numero)
+def trocar_aba(navegador, aba):
+    navegador.switch_to.window(aba)
+    time.sleep(TEMPO_TROCA_ABA)
 
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[2]/filtro-tarefas-pendentes/div/form/fieldset/div[4]/button[1]').click()
-        time.sleep(2)
+def extrair_data(texto: str):
+    """Extrai uma data no formato DD/MM/AAAA e retorna datetime."""
+    correspondencia = re.search(r"\d{2}/\d{2}/\d{4}", texto)
 
-        # Verifica se o processo está no gabinete
+    if not correspondencia:
+        return None
+
+    return datetime.strptime(correspondencia.group(), "%d/%m/%Y")
+
+
+def extrair_numero_processo(texto: str):
+    """Extrai o número CNJ de um processo."""
+    correspondencia = re.search(PADRAO_NUMERO_PROCESSO, texto)
+    return correspondencia.group() if correspondencia else None
+
+
+def trocar_para_iframe(navegador, wait, iframe_id: str) -> None:
+    """
+    Retorna ao conteúdo principal e entra no iframe solicitado.
+    """
+    navegador.switch_to.default_content()
+    wait.until(
+        EC.frame_to_be_available_and_switch_to_it(
+            (By.ID, iframe_id)
+        )
+    )
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+class Inicial:
+    """Responsável por iniciar o Firefox e efetuar o login no PJe."""
+
+    def login(self, usuario: str, senha: str):
+        servico = Service(
+            executable_path=str(caminho_arquivo("geckodriver.exe"))
+        )
+
+        navegador = webdriver.Firefox(service=servico)
+        wait = criar_wait(navegador, TEMPO_ESPERA_LOGIN)
+
         try:
-            elemento = navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[3]/div[1]/div/a/div/span[1]')
-            elemento.click()
-            verifica = True
-        except NoSuchElementException:
-            print("Elemento não encontrado, prosseguindo.1")
+            navegador.get(URL_PJE)
+
+            try:
+                wait.until(
+                    EC.frame_to_be_available_and_switch_to_it(
+                        (By.ID, "ssoFrame")
+                    )
+                )
+                print("Entrou no iframe de login com sucesso.")
+            except TimeoutException:
+                print(
+                    "Iframe 'ssoFrame' não encontrado. "
+                    "Continuando no conteúdo principal."
+                )
+
+            campo_usuario = wait.until(
+                EC.presence_of_element_located(
+                    (By.ID, "username")
+                )
+            )
+            campo_senha = wait.until(
+                EC.presence_of_element_located(
+                    (By.ID, "password")
+                )
+            )
+
+            campo_usuario.clear()
+            campo_usuario.send_keys(usuario)
+
+            campo_senha.clear()
+            campo_senha.send_keys(senha)
+
+            navegador.find_element(
+                By.XPATH,
+                '//input[@value="Entrar"]'
+            ).click()
+
+            navegador.switch_to.default_content()
+
+            # Aguarda o usuário preencher o 2FA manualmente.
+            self.aguardar_conclusao_login(
+                navegador,
+                tempo_limite=300,
+            )
+
+            return navegador
+
+        except Exception:
+            # O navegador só é fechado quando o login não pôde ser concluído.
+            navegador.quit()
+            raise
+
+    def aguardar_conclusao_login(
+        self,
+        navegador,
+        tempo_limite: int = 300,
+    ) -> bool:
+        """
+        Aguarda até o PJe carregar a tela principal.
+
+        Durante esse período, o usuário pode preencher manualmente
+        o código 2FA na janela do Firefox.
+        """
+        print(
+            "Aguardando a conclusão do login e o preenchimento "
+            "manual do código 2FA..."
+        )
+
+        def pagina_principal_carregada(driver):
+            try:
+                driver.switch_to.default_content()
+
+                # Em alguns acessos o PJe exibe uma opção para pular
+                # a verificação mobile. Se ela aparecer, tenta clicar.
+                self._pular_verificacao_mobile(driver)
+
+                # Elemento do menu de seleção de perfil.
+                menu_perfil = driver.find_elements(
+                    By.XPATH,
+                    "/html/body/nav/div/div[2]/ul/li/a",
+                )
+
+                # Iframe principal do PJe.
+                iframe_principal = driver.find_elements(
+                    By.ID,
+                    "ngFrame",
+                )
+
+                if menu_perfil or iframe_principal:
+                    return True
+
+                return False
+
+            except Exception:
+                return False
+
         try:
-            elemento = navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/div/div[3]/tarefas/div/div[3]/div/div/a/div/span[1]')
-            elemento.click()
-            verifica = True
-        except NoSuchElementException:
-            print("Elemento não encontrado, prosseguindo.2")
+            WebDriverWait(
+                navegador,
+                tempo_limite,
+                poll_frequency=1,
+            ).until(pagina_principal_carregada)
 
-        if(verifica):
-            flag = self.etiqueta(wait, navegador)
-        else:
-            flag = 2
+            navegador.switch_to.default_content()
 
-        return flag
+            print(
+                "Login e autenticação 2FA concluídos. "
+                "Tela principal do PJe identificada."
+            )
+            return True
 
-    # Adiciona a etiqueta no processo encontrado
-    def etiqueta(self, wait, navegador):
-        
-        #wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'ngFrame')))
-        #print("iFrame carregado. Contexto mudado para o iFrame.")
-        time.sleep(2)
+        except TimeoutException as erro:
+            raise TimeoutException(
+                "O tempo para concluir o login e informar o "
+                "código 2FA expirou."
+            ) from erro
 
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[1]/div[2]/div/div[1]/p-datalist/div/div/ul/li[1]/processo-datalist-card/div/div[2]/button/i').click()
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[1]/div[2]/div/div[1]/div[1]/acoes-processos-tarefa/div/div/div/button[2]/i').click()
-        navegador.find_element(By.XPATH, '//*[@id="itPesquisarEtiquetas"]').send_keys('META 02 - 70%')
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[3]/etiquetar-lote/div/div/div/div[2]/div/pje-selecionar-etiquetas/div/div/table/tbody/tr/td[1]/button/i').click()
-        time.sleep(1)
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[3]/etiquetar-lote/div/div/div/div[3]/div/button[1]/span').click()
-        time.sleep(5)
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[2]/right-panel/div/processos-tarefa/div[3]/etiquetar-lote/div/div/div/div[1]/button/span').click()
-        time.sleep(2)
-        navegador.find_element(By.XPATH, '/html/body/app-root/selector/div/div/div[1]/side-bar/nav/ul/li[1]/a/i').click()
+    @staticmethod
+    def _pular_verificacao_mobile(navegador) -> None:
+        xpath = (
+            "/html/body/div[5]/div/div/div/div[2]/div/div/"
+            "div/form/div/div[2]/div[4]/a"
+        )
 
-        return 1
-    
-    # Manipulação da planilha
-    def manipula_planilha(self, gab):
-        pasta = "Meta 02 - 70%"
-        coluna = "numero"
+        try:
+            elementos = navegador.find_elements(
+                By.XPATH,
+                xpath,
+            )
 
-        base_name = "Metas 2024_GABJ_0"
-        suffix = "_Out"
-        planilha = f"{base_name}{gab}{suffix}.xlsx"
+            if elementos and elementos[0].is_displayed():
+                elementos[0].click()
+                print("Verificação mobile ignorada.")
 
-        df = pd.read_excel(planilha, sheet_name=pasta)
+        except Exception:
+            # A ausência desse elemento é normal.
+            pass
 
-        processos = df[coluna].dropna()
-        return processos
-    
-class ProcBaixa:
+
+# ============================================================
+# TAREFA: VISUALIZAR EXPEDIENTE DJE
+# ============================================================
+
+class Tarefa_visualizaDJE:
+    """
+    Automação da tarefa "Visualizar expediente DJE".
+
+    Fluxo:
+    1. Seleciona o perfil Coordenador de Processamento.
+    2. Abre a tarefa Visualizar expediente DJE no PJe.
+    3. Abre o DJE em uma segunda aba e mantém essa aba aberta.
+    4. Para cada processo:
+       - volta ao PJe;
+       - abre o processo;
+       - abre os autos em uma terceira aba;
+       - consulta a data do expediente;
+       - fecha somente a aba dos autos;
+       - vai para a aba do DJE;
+       - pesquisa o processo;
+       - volta ao PJe;
+       - finaliza ou mantém o processo na tarefa.
+    """
+
+    XPATH_MENU_PERFIL = "/html/body/nav/div/div[2]/ul/li/a"
+    XPATH_CAMPO_PERFIL = (
+        "/html/body/nav/div/div[2]/ul/li/div/form/div/"
+        "div/table[1]/tbody/tr/td/input"
+    )
+
+    def __init__(self):
+        self.aba_pje = None
+        self.aba_dje = None
 
     def executa(self, navegador):
-        wait = WebDriverWait(navegador, 10)
-        
+        wait = criar_wait(navegador)
+
+        self.aba_pje = navegador.current_window_handle
+
+        self.selecionar_perfil(wait, navegador)
+        self.abrir_tarefa(wait, navegador)
+        self.abrir_dje(wait, navegador)
+        self.processar_processos(wait, navegador)
+
+        return "Tarefa 'Visualizar expediente DJE' concluída."
+
+    def selecionar_perfil(self, wait, navegador) -> None:
+        trocar_aba(navegador, self.aba_pje)
+        navegador.switch_to.default_content()
+
+        wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, self.XPATH_MENU_PERFIL)
+            )
+        ).click()
+
+        campo = wait.until(
+            EC.visibility_of_element_located(
+                (By.XPATH, self.XPATH_CAMPO_PERFIL)
+            )
+        )
+
+        campo.clear()
+        campo.send_keys("Coordenador de Processamento")
+
+        xpath_link_perfil = (
+            "/html/body/nav/div/div[2]/ul/li/div/form/div/"
+            "div/table[2]/tbody/tr/td//a["
+            "contains("
+            "translate(normalize-space(.), "
+            "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', "
+            "'abcdefghijklmnopqrstuvwxyz'), "
+            "'coordenador de processamento'"
+            ")"
+            "]"
+        )
+
+        try:
+            link_perfil = WebDriverWait(
+                navegador,
+                30,
+                ignored_exceptions=(
+                    StaleElementReferenceException,
+                ),
+            ).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpath_link_perfil)
+                )
+            )
+
+            navegador.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});",
+                link_perfil,
+            )
+
+            link_perfil = navegador.find_element(
+                By.XPATH,
+                xpath_link_perfil,
+            )
+
+            navegador.execute_script(
+                "arguments[0].click();",
+                link_perfil,
+            )
+
+            print(
+                "Perfil 'Coordenador de Processamento' selecionado."
+            )
+
+            navegador.switch_to.default_content()
+            WebDriverWait(navegador, 30).until(
+                EC.presence_of_element_located(
+                    (By.ID, "ngFrame")
+                )
+            )
+
+        except TimeoutException as erro:
+            raise RuntimeError(
+                "O perfil 'Coordenador de Processamento' "
+                "não apareceu na lista."
+            ) from erro
+
+    def abrir_tarefa(self, wait, navegador) -> None:
+        trocar_aba(navegador, self.aba_pje)
+        trocar_para_iframe(navegador, wait, "ngFrame")
+
+        indice = 1
+
+        while True:
+            xpath_tarefa = (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/div/div[3]/tarefas/div/div[3]/"
+                f"div[{indice}]/div/a/div/span[1]"
+            )
+
+            try:
+                elemento = WebDriverWait(
+                    navegador,
+                    10,
+                ).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, xpath_tarefa)
+                    )
+                )
+            except TimeoutException as erro:
+                raise RuntimeError(
+                    "A tarefa 'Visualizar expediente DJE' "
+                    "não foi encontrada."
+                ) from erro
+
+            texto_completo = elemento.text.strip()
+            texto_sem_quantidade = re.match(
+                r"^[^\d]*",
+                texto_completo,
+            ).group().strip()
+
+            if texto_sem_quantidade == "Visualizar expediente DJE":
+                elemento = wait.until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, xpath_tarefa)
+                    )
+                )
+
+                clicar_js(
+                    navegador,
+                    elemento
+                )
+
+                print(
+                    "Tarefa 'Visualizar expediente DJE' aberta."
+                )
+
+                time.sleep(2)
+                return
+
+            indice += 1
+
+    def abrir_dje(self, wait, navegador) -> None:
+        trocar_aba(navegador, self.aba_pje)
+        abas_antes = set(navegador.window_handles)
+
+        navegador.execute_script("window.open('about:blank', '_blank');")
+
+        WebDriverWait(navegador, 15).until(
+            lambda driver: len(set(driver.window_handles) - abas_antes) == 1
+        )
+
+        self.aba_dje = (
+            set(navegador.window_handles) - abas_antes
+        ).pop()
+
+        trocar_aba(navegador, self.aba_dje)
+        navegador.get(URL_DJE)
+
+        WebDriverWait(navegador, 30).until(
+            EC.presence_of_element_located(
+                (By.ID, "mat-input-0")
+            )
+        )
+
+        print("DJE aberto e mantido em uma aba separada.")
+
+        trocar_aba(navegador, self.aba_pje)
+        trocar_para_iframe(navegador, wait, "ngFrame")
+
+    def processar_processos(self, wait, navegador) -> None:
+        quantidade = self.obter_quantidade_processos(wait)
+
+        if quantidade is None:
+            raise RuntimeError(
+                "A quantidade de processos não foi encontrada."
+            )
+
+        print(f"Quantidade de processos: {quantidade}")
+
+        indice_lista = 1
+
+        for numero_ordem in range(1, quantidade + 1):
+            print(
+                f"Processando {numero_ordem} de {quantidade}."
+            )
+
+            indice_lista = self.processar_um_processo(
+                wait=wait,
+                navegador=navegador,
+                indice_lista=indice_lista,
+            )
+
+            time.sleep(2)
+
+        print("Todos os processos foram percorridos.")
+
+    @staticmethod
+    def obter_quantidade_processos(wait):
+        xpath_quantidade = (
+            "/html/body/app-root/selector/div/div/div[2]/"
+            "right-panel/div/processos-tarefa/div[1]/div[1]/"
+            "filtro-tarefas/div/div[1]/div[2]/span"
+        )
+
+        elemento = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, xpath_quantidade)
+            )
+        )
+
+        correspondencia = re.search(r"\d+", elemento.text)
+        return int(correspondencia.group()) if correspondencia else None
+
+    @staticmethod
+    def xpath_processo(indice: int) -> str:
+        return (
+            "/html/body/app-root/selector/div/div/div[2]/"
+            "right-panel/div/processos-tarefa/div[1]/div[2]/"
+            "div/div[1]/p-datalist/div/div/ul/"
+            f"li[{indice}]/processo-datalist-card/div/div[3]/"
+            "a/div/span[2]"
+        )
+
+    def processar_um_processo(
+        self,
+        wait,
+        navegador,
+        indice_lista: int,
+    ) -> int:
+        trocar_aba(navegador, self.aba_pje)
+        trocar_para_iframe(navegador, wait, "ngFrame")
+
+        xpath_processo = self.xpath_processo(indice_lista)
+
+        elemento_processo = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, xpath_processo)
+            )
+        )
+
+        numero_processo = extrair_numero_processo(
+            elemento_processo.text
+        )
+
+        if not numero_processo:
+            raise RuntimeError(
+                "Número do processo não encontrado no cartão."
+            )
+
+        clicar_js(navegador, elemento_processo)
+        print(f"Número do processo: {numero_processo}")
+
+        data_expediente = self.obter_data_expediente(
+            wait,
+            navegador,
+        )
+
+        data_publicacao = self.pesquisar_no_dje(
+            wait,
+            navegador,
+            numero_processo,
+        )
+
+        trocar_aba(navegador, self.aba_pje)
+
+        deve_finalizar = self.compara_data(
+            data_expediente,
+            data_publicacao,
+        )
+
+        if deve_finalizar:
+            self.finalizar_processo(wait, navegador)
+
+            data_atual = datetime.now().strftime("%d-%m-%Y")
+            self.log_processos(
+                numero_processo,
+                data_atual,
+            )
+
+            time.sleep(10)
+            return indice_lista
+
+        print(
+            f"Processo {numero_processo} ainda não foi publicado."
+        )
+        return indice_lista + 1
+
+    def obter_data_expediente(self, wait, navegador):
+        trocar_aba(navegador, self.aba_pje)
+        trocar_para_iframe(navegador, wait, "ngFrame")
+
+        xpath_abrir_autos = (
+            "/html/body/app-root/selector/div/div/div[2]/"
+            "right-panel/div/processos-tarefa/div[2]/"
+            "conteudo-tarefa/div[1]/div/div/div[2]/button[3]/i"
+        )
+
+        abas_antes = set(navegador.window_handles)
+
+        botao_autos = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, xpath_abrir_autos)
+            )
+        )
+        clicar_js(navegador, botao_autos)
+
+        WebDriverWait(navegador, 20).until(
+            lambda driver: len(
+                set(driver.window_handles) - abas_antes
+            ) == 1
+        )
+
+        aba_autos = (
+            set(navegador.window_handles) - abas_antes
+        ).pop()
+
+        try:
+            navegador.switch_to.window(aba_autos)
+
+            botao_expedientes = WebDriverWait(
+                navegador,
+                30,
+            ).until(
+                EC.element_to_be_clickable(
+                    (By.ID, "navbar:linkAbaExpedientes1")
+                )
+            )
+            clicar_js(navegador, botao_expedientes)
+
+            data_expediente = (
+                self.procurar_data_diario_eletronico(navegador)
+            )
+
+            if not data_expediente:
+                raise RuntimeError(
+                    "Data do expediente no Diário Eletrônico "
+                    "não encontrada."
+                )
+
+            print(
+                "Data do expediente: "
+                f"{data_expediente.strftime('%d/%m/%Y')}"
+            )
+
+            return data_expediente
+
+        finally:
+            if aba_autos in navegador.window_handles:
+                navegador.switch_to.window(aba_autos)
+                navegador.close()
+
+            trocar_aba(navegador, self.aba_pje)
+
+    @staticmethod
+    def procurar_data_diario_eletronico(navegador):
+        indice = 1
+
+        while True:
+            xpath_data = (
+                "/html/body/div[1]/div[2]/div[2]/table/tbody/"
+                "tr[2]/td/table/tbody/tr/td/div/div/div/div/"
+                "div/div[2]/span/div/table/tbody/"
+                f"tr[{indice}]/td[1]/span/div/span/div[2]"
+            )
+
+            try:
+                elemento = WebDriverWait(
+                    navegador,
+                    5,
+                ).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, xpath_data)
+                    )
+                )
+            except TimeoutException:
+                return None
+
+            if "Diário Eletrônico" in elemento.text:
+                return extrair_data(elemento.text)
+
+            indice += 1
+
+    def pesquisar_no_dje(
+        self,
+        wait,
+        navegador,
+        numero_processo: str,
+    ):
+        navegador.switch_to.window(self.aba_dje)
+
+        data_default = datetime(2001, 5, 17)
+
+        xpath_select_tribunal = (
+            "/html/body/app-root/div/app-calendario/div/div[2]/"
+            "app-pesquisa/app-pesquisa-form/div/div[1]/div[1]/"
+            "mat-form-field/div/div[1]/div[3]"
+        )
+        xpath_tre_pb = (
+            "/html/body/div[2]/div[2]/div/div/div/"
+            "mat-option[17]/span"
+        )
+        xpath_pesquisar = (
+            "/html/body/app-root/div/app-calendario/div/div[2]/"
+            "app-pesquisa/app-pesquisa-form/div/div[5]/button[2]"
+        )
+        xpath_resultado_data = (
+            "/html/body/app-root/div/app-calendario/div/div[8]/"
+            "button/span"
+        )
+
+        try:
+            WebDriverWait(navegador, 10).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpath_select_tribunal)
+                )
+            ).click()
+
+            WebDriverWait(navegador, 10).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpath_tre_pb)
+                )
+            ).click()
+        except TimeoutException:
+            pass
+
+        campo = WebDriverWait(
+            navegador,
+            20,
+        ).until(
+            EC.presence_of_element_located(
+                (By.ID, "mat-input-0")
+            )
+        )
+
+        campo.clear()
+        pyperclip.copy(numero_processo)
+        campo.send_keys(Keys.CONTROL, "v")
+
+        WebDriverWait(navegador, 20).until(
+            EC.element_to_be_clickable(
+                (By.XPATH, xpath_pesquisar)
+            )
+        ).click()
+
+        time.sleep(8)
+
+        try:
+            elemento_data = WebDriverWait(
+                navegador,
+                10,
+            ).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, xpath_resultado_data)
+                )
+            )
+            data_publicacao = extrair_data(
+                elemento_data.text
+            )
+        except TimeoutException:
+            data_publicacao = None
+
+        if data_publicacao:
+            print(
+                "Data da publicação no DJE: "
+                f"{data_publicacao.strftime('%d/%m/%Y')}"
+            )
+            return data_publicacao
+
+        print("Data da publicação não encontrada no DJE.")
+        return data_default
+
+    def finalizar_processo(self, wait, navegador) -> None:
+        trocar_aba(navegador, self.aba_pje)
+        trocar_para_iframe(navegador, wait, "ngFrame")
+
+        botao_transicao = wait.until(
+            EC.element_to_be_clickable(
+                (By.ID, "btnTransicoesTarefa")
+            )
+        )
+        clicar_js(navegador, botao_transicao)
+
+        xpath_opcao = (
+            "/html/body/app-root/selector/div/div/div[2]/"
+            "right-panel/div/processos-tarefa/div[2]/"
+            "conteudo-tarefa/div[1]/div/div/div[2]/"
+            "div[2]/ul/li/a"
+        )
+
+        opcao = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, xpath_opcao)
+            )
+        )
+        clicar_js(navegador, opcao)
+
+    @staticmethod
+    def compara_data(data_processo, data_publicacao) -> bool:
+        return data_processo <= data_publicacao
+
+    @staticmethod
+    def log_processos(numero_processo: str, data_atual: str) -> None:
+        nome_arquivo = f"processos_manipulados_{data_atual}.txt"
+        caminho = caminho_arquivo(nome_arquivo)
+
+        with caminho.open("a", encoding="utf-8") as arquivo:
+            arquivo.write(f"{numero_processo}\n")
+
+        print(
+            f"Processo {numero_processo} salvo em {nome_arquivo}."
+        )
+
+
+# ============================================================
+# TAREFA: ETIQUETA META 02 - 70%
+# ============================================================
+
+class Etiqueta_meta2_70:
+    """Aplica a etiqueta 'META 02 - 70%' nos processos informados."""
+
+    XPATH_MENU_PERFIL = "/html/body/nav/div/div[2]/ul/li/a"
+    XPATH_CAMPO_PERFIL = (
+        "/html/body/nav/div/div[2]/ul/li/div/form/div/"
+        "div/table[1]/tbody/tr/td/input"
+    )
+    XPATH_RESULTADO_PERFIL = (
+        "/html/body/nav/div/div[2]/ul/li/div/form/div/"
+        "div/table[2]/tbody/tr/td[2]/a"
+    )
+
+    def executa(self, navegador):
+        wait = criar_wait(navegador)
+
+        for gabinete in range(1, 7):
+            processos = self.manipula_planilha(gabinete)
+            self.seleciona_gabinete(
+                wait,
+                navegador,
+                gabinete
+            )
+
+            primeira_pesquisa = True
+
+            for numero in processos:
+                print(f"Pesquisando processo {numero}")
+
+                primeira_pesquisa = self.pesquisa_processo(
+                    wait,
+                    navegador,
+                    str(numero),
+                    primeira_pesquisa,
+                )
+
+        return "Tarefa 'Etiqueta META 02 - 70%' concluída."
+
+    def seleciona_gabinete(
+        self,
+        wait,
+        navegador,
+        gabinete: int,
+    ) -> None:
+        nome_perfil = PERFIS_GABINETES.get(gabinete)
+
+        if not nome_perfil:
+            raise ValueError(f"Gabinete inválido: {gabinete}")
+
+        navegador.switch_to.default_content()
+
+        wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, self.XPATH_MENU_PERFIL)
+            )
+        ).click()
+
+        campo = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, self.XPATH_CAMPO_PERFIL)
+            )
+        )
+
+        campo.clear()
+        campo.send_keys(nome_perfil)
+
+        perfil = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, self.XPATH_RESULTADO_PERFIL)
+            )
+        )
+
+        if "Assessor Chefe" not in perfil.text:
+            raise RuntimeError(
+                f"Perfil do gabinete {gabinete} não encontrado."
+            )
+
+        perfil.click()
+        print(f"Perfil do gabinete {gabinete} selecionado.")
+        time.sleep(5)
+
+    def pesquisa_processo(
+        self,
+        wait,
+        navegador,
+        numero: str,
+        primeira_pesquisa: bool,
+    ) -> bool:
+        if primeira_pesquisa:
+            trocar_para_iframe(
+                navegador,
+                wait,
+                "ngFrame"
+            )
+
+            xpath_filtro = (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/div/div[3]/tarefas/div/div[1]/div"
+            )
+
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpath_filtro)
+                )
+            ).click()
+
+        xpath_campo = (
+            "/html/body/app-root/selector/div/div/div[2]/"
+            "right-panel/div/div/div[3]/tarefas/div/div[2]/"
+            "filtro-tarefas-pendentes/div/form/fieldset/"
+            "div[1]/input"
+        )
+        xpath_botao_pesquisar = (
+            "/html/body/app-root/selector/div/div/div[2]/"
+            "right-panel/div/div/div[3]/tarefas/div/div[2]/"
+            "filtro-tarefas-pendentes/div/form/fieldset/"
+            "div[4]/button[1]"
+        )
+
+        campo = wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, xpath_campo)
+            )
+        )
+
+        campo.clear()
+        campo.send_keys(numero)
+
+        wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, xpath_botao_pesquisar)
+            )
+        ).click()
+
+        time.sleep(2)
+
+        if self._abrir_resultado_pesquisa(navegador):
+            self.etiqueta(wait, navegador)
+            return True
+
+        print(f"Processo {numero} não encontrado no gabinete.")
+        return False
+
+    @staticmethod
+    def _abrir_resultado_pesquisa(navegador) -> bool:
+        xpaths = [
+            (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/div/div[3]/tarefas/div/div[3]/"
+                "div[1]/div/a/div/span[1]"
+            ),
+            (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/div/div[3]/tarefas/div/div[3]/"
+                "div/div/a/div/span[1]"
+            ),
+        ]
+
+        for xpath in xpaths:
+            try:
+                navegador.find_element(By.XPATH, xpath).click()
+                return True
+            except NoSuchElementException:
+                continue
+
+        return False
+
+    @staticmethod
+    def etiqueta(wait, navegador) -> None:
+        xpaths = {
+            "selecionar_processo": (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/processos-tarefa/div[1]/div[2]/"
+                "div/div[1]/p-datalist/div/div/ul/li[1]/"
+                "processo-datalist-card/div/div[2]/button/i"
+            ),
+            "abrir_etiquetas": (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/processos-tarefa/div[1]/div[2]/"
+                "div/div[1]/div[1]/acoes-processos-tarefa/"
+                "div/div/div/button[2]/i"
+            ),
+            "adicionar_etiqueta": (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/processos-tarefa/div[3]/"
+                "etiquetar-lote/div/div/div/div[2]/div/"
+                "pje-selecionar-etiquetas/div/div/table/"
+                "tbody/tr/td[1]/button/i"
+            ),
+            "confirmar": (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/processos-tarefa/div[3]/"
+                "etiquetar-lote/div/div/div/div[3]/div/"
+                "button[1]/span"
+            ),
+            "fechar": (
+                "/html/body/app-root/selector/div/div/div[2]/"
+                "right-panel/div/processos-tarefa/div[3]/"
+                "etiquetar-lote/div/div/div/div[1]/button/span"
+            ),
+            "voltar": (
+                "/html/body/app-root/selector/div/div/div[1]/"
+                "side-bar/nav/ul/li[1]/a/i"
+            ),
+        }
+
+        for chave in ("selecionar_processo", "abrir_etiquetas"):
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpaths[chave])
+                )
+            ).click()
+
+        campo_etiqueta = wait.until(
+            EC.presence_of_element_located(
+                (By.ID, "itPesquisarEtiquetas")
+            )
+        )
+        campo_etiqueta.clear()
+        campo_etiqueta.send_keys("META 02 - 70%")
+
+        for chave in (
+            "adicionar_etiqueta",
+            "confirmar",
+            "fechar",
+            "voltar",
+        ):
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpaths[chave])
+                )
+            ).click()
+
+            if chave == "confirmar":
+                time.sleep(5)
+            else:
+                time.sleep(1)
+
+    @staticmethod
+    def manipula_planilha(gabinete: int):
+        nome_planilha = f"Metas 2024_GABJ_0{gabinete}_Out.xlsx"
+        caminho = caminho_arquivo(nome_planilha)
+
+        if not caminho.exists():
+            raise FileNotFoundError(
+                f"Planilha não encontrada: {caminho}"
+            )
+
+        df = pd.read_excel(
+            caminho,
+            sheet_name="Meta 02 - 70%"
+        )
+
+        if "numero" not in df.columns:
+            raise KeyError(
+                f"A coluna 'numero' não existe em {nome_planilha}."
+            )
+
+        return df["numero"].dropna().astype(str)
+
+
+# ============================================================
+# TAREFA: VERIFICAR BAIXA DEFINITIVA
+# ============================================================
+
+class ProcBaixa:
+    """Verifica se os processos possuem movimento de baixa definitiva."""
+
+    def executa(self, navegador):
+        wait = criar_wait(navegador)
+
         processos = self.manipula_planilha()
         self.abre_pesquisa(wait, navegador)
+
         for numero in processos:
-            print(numero)
-            self.pesquisa_processo(wait, navegador, numero)
-                
-        navegador.quit()
-        return "-----Executei a tarefa-----"
-    
-    # Manipulação da planilha
-    def manipula_planilha(self):
-        coluna = "numero"
+            print(f"Pesquisando processo {numero}")
+            self.pesquisa_processo(
+                wait,
+                navegador,
+                str(numero)
+            )
 
-        planilha = f"analise.xlsx"
+        return "Tarefa 'Verificar baixa definitiva' concluída."
 
-        df = pd.read_excel(planilha)
+    @staticmethod
+    def manipula_planilha():
+        caminho = caminho_arquivo("analise.xlsx")
 
-        processos = df[coluna].dropna()
-        return processos
+        if not caminho.exists():
+            raise FileNotFoundError(
+                f"Planilha não encontrada: {caminho}"
+            )
 
-    # Abre a parte de pesquisar o processo
-    def abre_pesquisa(self, wait, navegador):
-        #clica na barra
-        wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/nav/div/div[1]/ul/li/a/span')))
-        navegador.find_element(By.XPATH, '/html/body/nav/div/div[1]/ul/li/a/span').click()
-        #processo
-        wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/div[5]/div/nav/div[2]/ul/li[2]/a')))
-        navegador.find_element(By.XPATH, '/html/body/div[5]/div/nav/div[2]/ul/li[2]/a').click()
-        #pesquisar
-        wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/div[5]/div/nav/div[2]/ul/li[2]/div/ul/li[6]/a')))
-        navegador.find_element(By.XPATH, '/html/body/div[5]/div/nav/div[2]/ul/li[2]/div/ul/li[6]/a').click()
-        #processo
-        wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/div[5]/div/nav/div[2]/ul/li[2]/div/ul/li[6]/div/ul/li[1]/a')))
-        navegador.find_element(By.XPATH, '/html/body/div[5]/div/nav/div[2]/ul/li[2]/div/ul/li[6]/div/ul/li[1]/a').click()
+        df = pd.read_excel(caminho)
+
+        if "numero" not in df.columns:
+            raise KeyError(
+                "A coluna 'numero' não existe em analise.xlsx."
+            )
+
+        return df["numero"].dropna().astype(str)
+
+    @staticmethod
+    def abre_pesquisa(wait, navegador) -> None:
+        xpaths = [
+            "/html/body/nav/div/div[1]/ul/li/a/span",
+            "/html/body/div[5]/div/nav/div[2]/ul/li[2]/a",
+            (
+                "/html/body/div[5]/div/nav/div[2]/ul/"
+                "li[2]/div/ul/li[6]/a"
+            ),
+            (
+                "/html/body/div[5]/div/nav/div[2]/ul/"
+                "li[2]/div/ul/li[6]/div/ul/li[1]/a"
+            ),
+        ]
+
+        for xpath in xpaths:
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpath)
+                )
+            ).click()
 
         time.sleep(0.5)
 
-    # Pesquisa o processo
-    def pesquisa_processo(self, wait, navegador, numero):
-        abas = navegador.window_handles
+    def pesquisa_processo(
+        self,
+        wait,
+        navegador,
+        numero: str,
+    ) -> None:
+        abas_antes = navegador.window_handles
 
-        pyperclip.copy(numero) 
-        input_element = navegador.find_element('xpath', '//*[@id="fPP:numeroProcesso:numeroSequencial"]')
-        input_element.clear() 
-        input_element.send_keys(Keys.CONTROL, 'v')
-        navegador.find_element('xpath', '//*[@id="fPP:searchProcessos"]').click()
+        campo = wait.until(
+            EC.presence_of_element_located(
+                (
+                    By.ID,
+                    "fPP:numeroProcesso:numeroSequencial",
+                )
+            )
+        )
+
+        campo.clear()
+        pyperclip.copy(numero)
+        campo.send_keys(Keys.CONTROL, "v")
+
+        wait.until(
+            EC.element_to_be_clickable(
+                (By.ID, "fPP:searchProcessos")
+            )
+        ).click()
+
         time.sleep(3)
 
         try:
-            #abre os autos
-            elemento = navegador.find_element(By.XPATH, '//*[starts-with(@id, "fPP:processosTable:") and contains(@id, ":j_id489")]')
-            elemento.click()
-            baixa = self.verifica_baixa(wait, abas, navegador)
-            if baixa:
-                self.salvar_processo(numero, "com_baixa")
-            else:
-                self.salvar_processo(numero, "sem_baixa")
+            resultado = navegador.find_element(
+                By.XPATH,
+                (
+                    '//*[starts-with(@id, "fPP:processosTable:") '
+                    'and contains(@id, ":j_id489")]'
+                )
+            )
+            resultado.click()
+
+            tem_baixa = self.verifica_baixa(
+                abas_antes,
+                navegador
+            )
+
+            categoria = (
+                "com_baixa"
+                if tem_baixa
+                else "sem_baixa"
+            )
+
         except NoSuchElementException:
-            self.salvar_processo(numero, "nao_encontrado")                     
-            print(f"-----------------Processo {numero} não encontrado-----------------")
+            categoria = "nao_encontrado"
+            print(f"Processo {numero} não encontrado.")
 
-    # Verifica se existe o movimento de baixa na árvore do processo
-    def verifica_baixa(self, wait, abas, navegador):
-        time.sleep(2) 
-        novas_abas = navegador.window_handles
+        self.salvar_processo(numero, categoria)
 
-        if len(novas_abas) > len(abas):
-            navegador.switch_to.window(novas_abas[1])
-            #print("Nova aba aberta e foco trocado para a nova aba.")
-        else:
-            print("Não foi possível abrir uma nova aba.")
+    @staticmethod
+    def verifica_baixa(abas_antes, navegador) -> bool:
+        wait = criar_wait(navegador)
 
-        elementos = navegador.find_elements(By.CLASS_NAME, "texto-movimento")
+        wait.until(
+            lambda driver: len(driver.window_handles) > len(abas_antes)
+        )
 
-        baixa = any("baixa definitiva" in el.text.lower() for el in elementos)
+        aba_autos = navegador.window_handles[-1]
+        navegador.switch_to.window(aba_autos)
 
-        if baixa:
-            print("Encontrado: BAIXA DEFINITIVA")
-            time.sleep(0.5)
-            navegador.close()
-            time.sleep(0.5)
-            abas = navegador.window_handles
-            navegador.switch_to.window(abas[0])
-            time.sleep(0.5)
-            return True
-        else:
-            print("Não encontrado")
-            time.sleep(0.5)
-            navegador.close()
-            time.sleep(0.5)
-            abas = navegador.window_handles
-            navegador.switch_to.window(abas[0])
-            time.sleep(0.5)
-            return False
+        elementos = wait.until(
+            EC.presence_of_all_elements_located(
+                (By.CLASS_NAME, "texto-movimento")
+            )
+        )
 
-    # Salva o processo na planilha com sua situação correspondente: sembaixa, com baixa ou não encontrado
-    def salvar_processo(self, numero_processo, categoria):
-        nome_arquivo = "processos.xlsx"
-        caminho_arquivo = os.path.join(os.getcwd(), nome_arquivo)
+        tem_baixa = any(
+            "baixa definitiva" in elemento.text.lower()
+            for elemento in elementos
+        )
 
-        # Verifica se o arquivo já existe
-        if os.path.exists(caminho_arquivo):
-            workbook = load_workbook(caminho_arquivo)
-            sheet = workbook.active
-        else:
-            workbook = Workbook()
-            sheet = workbook.active
-            # Cabeçalhos nas colunas A, B, C
-            sheet["A1"] = "Processos Sem Baixa"
-            sheet["B1"] = "Processos Com Baixa"
-            sheet["C1"] = "Processos Não Encontrados"
+        print(
+            "Encontrado: BAIXA DEFINITIVA"
+            if tem_baixa
+            else "Baixa definitiva não encontrada."
+        )
 
-        # Define a coluna baseada na categoria
+        navegador.close()
+        navegador.switch_to.window(navegador.window_handles[0])
+
+        return tem_baixa
+
+    @staticmethod
+    def salvar_processo(
+        numero_processo: str,
+        categoria: str,
+    ) -> None:
+        caminho = caminho_arquivo("processos.xlsx")
+
         colunas = {
-            "sem_baixa": "A",
-            "com_baixa": "B",
-            "nao_encontrado": "C"
+            "sem_baixa": ("A", "Processos Sem Baixa"),
+            "com_baixa": ("B", "Processos Com Baixa"),
+            "nao_encontrado": (
+                "C",
+                "Processos Não Encontrados",
+            ),
         }
 
         if categoria not in colunas:
-            print(f"Categoria inválida: {categoria}")
-            return
+            raise ValueError(
+                f"Categoria inválida: {categoria}"
+            )
 
-        letra_coluna = colunas[categoria]
+        if caminho.exists():
+            workbook = load_workbook(caminho)
+            planilha = workbook.active
+        else:
+            workbook = Workbook()
+            planilha = workbook.active
 
-        # Encontra a próxima linha vazia na coluna
+            for letra, cabecalho in colunas.values():
+                planilha[f"{letra}1"] = cabecalho
+
+        letra_coluna, _ = colunas[categoria]
+
         linha = 2
-        while sheet[f"{letra_coluna}{linha}"].value is not None:
+        while planilha[f"{letra_coluna}{linha}"].value is not None:
             linha += 1
 
-        # Insere o número do processo
-        sheet[f"{letra_coluna}{linha}"] = numero_processo
+        planilha[f"{letra_coluna}{linha}"] = numero_processo
+        workbook.save(caminho)
 
-        # Salva
-        workbook.save(caminho_arquivo)
-        print(f"Processo {numero_processo} salvo na coluna {letra_coluna} ({categoria}).")
+        print(
+            f"Processo {numero_processo} salvo na categoria "
+            f"'{categoria}'."
+        )
