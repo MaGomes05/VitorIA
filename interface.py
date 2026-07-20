@@ -13,6 +13,7 @@ from tarefas import (
     Inicial,
     ProcBaixa,
     Tarefa_visualizaDJE,
+    ProcJulgado
 )
 
 
@@ -295,6 +296,11 @@ class Interface:
                 "Analisa se os processos possuem o movimento de baixa definitiva.",
                 self.start_etiqueta_proc_baixa,
             ),
+            (
+                "Processo Julgado",
+                "Finaliza os processos já julgados da tarefa 'Processo Julgado'.",
+                self.start_procjulgado_thread,
+            ),
         ]
 
         self.botoes_tarefas = []
@@ -499,6 +505,12 @@ class Interface:
         self.iniciar_tarefa(
             nome="Verificando baixa definitiva",
             funcao=ProcBaixa().executa,
+        )
+    
+    def start_procjulgado_thread(self):
+        self.iniciar_tarefa(
+            nome="Verificando processos julgados",
+            funcao=ProcJulgado().executa,
         )
 
     def iniciar_tarefa(self, nome, funcao):
