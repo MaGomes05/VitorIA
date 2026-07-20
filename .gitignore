@@ -14,5 +14,7 @@ env/
 
 geckodriver.exe
 
-processos_julgados_finalizados_20-07-2026
-processos_manipulados_20-07-2026
+# Logs
+*.log
+processos_manipulados_*.txt
+processos_julgados_finalizados_*.txt
