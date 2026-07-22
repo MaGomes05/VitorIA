@@ -8,13 +8,7 @@ from tkinter import messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from tarefas import (
-    Etiqueta_meta2_70,
-    Inicial,
-    ProcBaixa,
-    Tarefa_visualizaDJE,
-    ProcJulgado
-)
+from tarefas import Inicial, ProcJulgado, Tarefa_visualizaDJE
 
 
 def caminho_recurso(nome_arquivo: str) -> str:
@@ -34,7 +28,8 @@ class Interface:
         self.tarefa_em_andamento = False
         self.senha_visivel = False
         self.fila_resultados = Queue()
-        self.botoes_tarefas = []
+        self.botoes_tarefas_disponiveis = []
+        self.botoes_tarefas_pausadas = []
         self.canvas_tarefas = None
         self.frame_botoes_tarefas = None
         self.janela_canvas_tarefas = None
@@ -226,12 +221,17 @@ class Interface:
         )
         card_tarefas.pack(fill="both", expand=True)
 
-        cabecalho = tk.Frame(card_tarefas, bg="#FFFFFF", padx=25, pady=20)
+        cabecalho = tk.Frame(
+            card_tarefas,
+            bg="#FFFFFF",
+            padx=25,
+            pady=20,
+        )
         cabecalho.pack(fill="x")
 
         self.label_tarefas = tk.Label(
             cabecalho,
-            text="Tarefas disponíveis",
+            text="Tarefas",
             bg="#FFFFFF",
             fg="#26354A",
             font=("Segoe UI", 15, "bold"),
@@ -240,7 +240,7 @@ class Interface:
 
         self.label_orientacao = tk.Label(
             cabecalho,
-            text="Faça o login para habilitar as tarefas.",
+            text="Faça o login para habilitar as tarefas disponíveis.",
             bg="#FFFFFF",
             fg="#7A8494",
             font=("Segoe UI", 10),
@@ -249,18 +249,39 @@ class Interface:
         )
         self.label_orientacao.pack(anchor="w", pady=(4, 0))
 
-        tk.Frame(card_tarefas, bg="#E5E9F0", height=1).pack(fill="x")
+        tk.Frame(
+            card_tarefas,
+            bg="#E5E9F0",
+            height=1,
+        ).pack(fill="x")
 
-        area_scroll = tk.Frame(card_tarefas, bg="#FFFFFF")
+        area_scroll = tk.Frame(
+            card_tarefas,
+            bg="#FFFFFF",
+        )
         area_scroll.pack(fill="both", expand=True)
 
-        self.canvas_tarefas = tk.Canvas(area_scroll, bg="#FFFFFF", highlightthickness=0)
-        self.canvas_tarefas.pack(side="left", fill="both", expand=True)
+        self.canvas_tarefas = tk.Canvas(
+            area_scroll,
+            bg="#FFFFFF",
+            highlightthickness=0,
+        )
+        self.canvas_tarefas.pack(
+            side="left",
+            fill="both",
+            expand=True,
+        )
 
-        scrollbar = ttk.Scrollbar(area_scroll, orient="vertical", command=self.canvas_tarefas.yview)
+        scrollbar = ttk.Scrollbar(
+            area_scroll,
+            orient="vertical",
+            command=self.canvas_tarefas.yview,
+        )
         scrollbar.pack(side="right", fill="y")
 
-        self.canvas_tarefas.configure(yscrollcommand=scrollbar.set)
+        self.canvas_tarefas.configure(
+            yscrollcommand=scrollbar.set
+        )
 
         self.frame_botoes_tarefas = tk.Frame(
             self.canvas_tarefas,
@@ -269,93 +290,252 @@ class Interface:
             pady=20,
         )
 
-        self.janela_canvas_tarefas = self.canvas_tarefas.create_window(
-            (0, 0),
-            window=self.frame_botoes_tarefas,
-            anchor="nw",
+        self.janela_canvas_tarefas = (
+            self.canvas_tarefas.create_window(
+                (0, 0),
+                window=self.frame_botoes_tarefas,
+                anchor="nw",
+            )
         )
 
-        self.frame_botoes_tarefas.bind("<Configure>", self.atualizar_scroll_tarefas)
-        self.canvas_tarefas.bind("<Configure>", self.ajustar_largura_scroll_tarefas)
-        self.canvas_tarefas.bind("<Enter>", self.ativar_scroll_mouse)
-        self.canvas_tarefas.bind("<Leave>", self.desativar_scroll_mouse)
+        self.frame_botoes_tarefas.bind(
+            "<Configure>",
+            self.atualizar_scroll_tarefas,
+        )
+        self.canvas_tarefas.bind(
+            "<Configure>",
+            self.ajustar_largura_scroll_tarefas,
+        )
+        self.canvas_tarefas.bind(
+            "<Enter>",
+            self.ativar_scroll_mouse,
+        )
+        self.canvas_tarefas.bind(
+            "<Leave>",
+            self.desativar_scroll_mouse,
+        )
 
-        tarefas = [
+        self.botoes_tarefas_disponiveis = []
+        self.botoes_tarefas_pausadas = []
+
+        # -----------------------------------------------------
+        # TAREFAS DISPONÍVEIS
+        # -----------------------------------------------------
+
+        self.criar_titulo_secao(
+            "Tarefas disponíveis",
+            "Após o login, estas automações poderão ser executadas.",
+            cor_titulo="#217A4D",
+        )
+
+        tarefas_disponiveis = [
             (
                 "Visualizar expediente DJE",
                 "Verifica a publicação dos expedientes no DJE.",
                 self.start_visualizaDJE_thread,
             ),
             (
-                "Aplicar etiqueta META 02 - 70%",
-                "Pesquisa os processos e aplica a etiqueta correspondente.",
-                self.start_etiqueta_meta2_thread,
-            ),
-            (
-                "Verificar baixa definitiva",
-                "Analisa se os processos possuem o movimento de baixa definitiva.",
-                self.start_etiqueta_proc_baixa,
-            ),
-            (
                 "Processo Julgado",
-                "Finaliza os processos já julgados da tarefa 'Processo Julgado'.",
+                (
+                    "Verifica a existência da Certidão de Julgamento "
+                    "e finaliza os processos correspondentes."
+                ),
                 self.start_procjulgado_thread,
             ),
         ]
 
-        self.botoes_tarefas = []
-        for titulo, descricao, comando in tarefas:
-            self.criar_item_tarefa(titulo, descricao, comando)
+        for titulo, descricao, comando in tarefas_disponiveis:
+            self.criar_item_tarefa(
+                titulo=titulo,
+                descricao=descricao,
+                comando=comando,
+                disponivel=True,
+            )
 
-    def criar_item_tarefa(self, titulo, descricao, comando):
-        item = tk.Frame(
-            self.frame_botoes_tarefas,
-            bg="#F8F9FC",
-            highlightbackground="#DCE2EA",
-            highlightthickness=1,
-            padx=18,
-            pady=15,
+        # -----------------------------------------------------
+        # TAREFAS COM DESENVOLVIMENTO PAUSADO
+        # -----------------------------------------------------
+
+        self.criar_titulo_secao(
+            "Desenvolvimento pausado",
+            (
+                "Estas automações permanecem visíveis apenas para "
+                "indicar o planejamento do projeto."
+            ),
+            cor_titulo="#9A6700",
+            margem_superior=14,
         )
-        item.pack(fill="x", pady=(0, 12))
+
+        tarefas_pausadas = [
+            (
+                "Etiqueta META 02 - 70%",
+                (
+                    "Automação de pesquisa e aplicação da etiqueta "
+                    "META 02 - 70%."
+                ),
+            ),
+            (
+                "Verificação de Baixa Definitiva",
+                (
+                    "Automação de conferência da movimentação de "
+                    "baixa definitiva."
+                ),
+            ),
+        ]
+
+        for titulo, descricao in tarefas_pausadas:
+            self.criar_item_tarefa(
+                titulo=titulo,
+                descricao=descricao,
+                comando=None,
+                disponivel=False,
+            )
+
+    def criar_titulo_secao(
+        self,
+        titulo,
+        descricao,
+        cor_titulo,
+        margem_superior=0,
+    ):
+        frame_secao = tk.Frame(
+            self.frame_botoes_tarefas,
+            bg="#FFFFFF",
+        )
+        frame_secao.pack(
+            fill="x",
+            pady=(margem_superior, 10),
+        )
 
         tk.Label(
-            item,
+            frame_secao,
             text=titulo,
-            bg="#F8F9FC",
-            fg="#26354A",
+            bg="#FFFFFF",
+            fg=cor_titulo,
             font=("Segoe UI", 11, "bold"),
             anchor="w",
-            justify="left",
         ).pack(fill="x")
 
         tk.Label(
-            item,
+            frame_secao,
             text=descricao,
-            bg="#F8F9FC",
-            fg="#6B7587",
+            bg="#FFFFFF",
+            fg="#7A8494",
             font=("Segoe UI", 9),
             anchor="w",
             justify="left",
             wraplength=550,
-        ).pack(fill="x", pady=(5, 12))
+        ).pack(
+            fill="x",
+            pady=(2, 0),
+        )
+
+    def criar_item_tarefa(
+        self,
+        titulo,
+        descricao,
+        comando,
+        disponivel=True,
+    ):
+        if disponivel:
+            cor_fundo = "#F8F9FC"
+            cor_borda = "#DCE2EA"
+            cor_titulo = "#26354A"
+            cor_descricao = "#6B7587"
+            texto_botao = "Executar tarefa"
+            cor_botao = "#E8ECF2"
+            cor_texto_botao = "#26354A"
+            texto_status = "Disponível após o login"
+            cor_status = "#217A4D"
+            cursor = "hand2"
+        else:
+            cor_fundo = "#F4F4F4"
+            cor_borda = "#E1E1E1"
+            cor_titulo = "#777777"
+            cor_descricao = "#969696"
+            texto_botao = "Desenvolvimento pausado"
+            cor_botao = "#ECECEC"
+            cor_texto_botao = "#999999"
+            texto_status = "Pausado"
+            cor_status = "#9A6700"
+            cursor = "arrow"
+
+        item = tk.Frame(
+            self.frame_botoes_tarefas,
+            bg=cor_fundo,
+            highlightbackground=cor_borda,
+            highlightthickness=1,
+            padx=18,
+            pady=15,
+        )
+        item.pack(
+            fill="x",
+            pady=(0, 12),
+        )
+
+        cabecalho_item = tk.Frame(
+            item,
+            bg=cor_fundo,
+        )
+        cabecalho_item.pack(fill="x")
+
+        tk.Label(
+            cabecalho_item,
+            text=titulo,
+            bg=cor_fundo,
+            fg=cor_titulo,
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+            justify="left",
+        ).pack(
+            side="left",
+            fill="x",
+            expand=True,
+        )
+
+        tk.Label(
+            cabecalho_item,
+            text=texto_status,
+            bg=cor_fundo,
+            fg=cor_status,
+            font=("Segoe UI", 8, "bold"),
+        ).pack(side="right")
+
+        tk.Label(
+            item,
+            text=descricao,
+            bg=cor_fundo,
+            fg=cor_descricao,
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+            wraplength=550,
+        ).pack(
+            fill="x",
+            pady=(6, 12),
+        )
 
         botao = tk.Button(
             item,
-            text="Executar tarefa",
-            command=comando,
+            text=texto_botao,
+            command=comando if disponivel else None,
             state="disabled",
-            bg="#E8ECF2",
-            fg="#26354A",
+            bg=cor_botao,
+            fg=cor_texto_botao,
             activebackground="#D9E0EA",
             activeforeground="#26354A",
-            disabledforeground="#949CAA",
+            disabledforeground=cor_texto_botao,
             relief="flat",
-            cursor="hand2",
+            cursor=cursor,
             font=("Segoe UI", 10, "bold"),
             pady=8,
         )
         botao.pack(fill="x")
-        self.botoes_tarefas.append(botao)
+
+        if disponivel:
+            self.botoes_tarefas_disponiveis.append(botao)
+        else:
+            self.botoes_tarefas_pausadas.append(botao)
 
     def criar_area_status(self, container):
         frame_status = tk.Frame(
@@ -433,7 +613,8 @@ class Interface:
         self.barra_progresso.pack_forget()
 
     def alterar_estado_tarefas(self, estado):
-        for botao in self.botoes_tarefas:
+        """Altera somente as tarefas atualmente disponíveis."""
+        for botao in self.botoes_tarefas_disponiveis:
             botao.configure(state=estado)
 
     def start_login_thread(self):
@@ -495,18 +676,8 @@ class Interface:
             funcao=Tarefa_visualizaDJE().executa,
         )
 
-    def start_etiqueta_meta2_thread(self):
-        self.iniciar_tarefa(
-            nome="Aplicando etiqueta META 02 - 70%",
-            funcao=Etiqueta_meta2_70().executa,
-        )
 
-    def start_etiqueta_proc_baixa(self):
-        self.iniciar_tarefa(
-            nome="Verificando baixa definitiva",
-            funcao=ProcBaixa().executa,
-        )
-    
+
     def start_procjulgado_thread(self):
         self.iniciar_tarefa(
             nome="Verificando processos julgados",

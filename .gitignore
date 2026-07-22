@@ -1,20 +1,38 @@
+# ==========================
+# Python
+# ==========================
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
+# Ambientes virtuais
 .venv/
 venv/
 env/
 
+# ==========================
+# IDEs
+# ==========================
 .vscode/
 .idea/
 
-*.log
-
-geckodriver.exe
-
+# ==========================
 # Logs
+# ==========================
 *.log
 processos_manipulados_*.txt
 processos_julgados_finalizados_*.txt
+
+# ==========================
+# PyInstaller
+# ==========================
+build/
+dist/
+*.spec
+
+# ==========================
+# Sistema operacional
+# ==========================
+Thumbs.db
+.DS_Store
