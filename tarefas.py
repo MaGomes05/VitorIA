@@ -27,12 +27,13 @@ from selenium.webdriver.support.ui import WebDriverWait
 # ============================================================
 
 URL_PJE = "https://pje.tre-pb.jus.br/pje/login.seam"
-URL_DJE = "https://dje-consulta.tse.jus.br/#/dje/calendario?trib=TRE-PB"
+URL_DJE = "https://www.tse.jus.br/servicos-judiciais/publicacoes-oficiais/diario-da-justica-eletronico"
 
 TEMPO_ESPERA_PADRAO = 10
 TEMPO_ESPERA_LOGIN = 20
 TEMPO_CLICK = 0.7
 TEMPO_TROCA_ABA = 0.7
+TEMPO_TROCA_IFRAME = 0.5
 
 DOCUMENTO_PROCURADO = "certidao de julgamento"
 
@@ -142,17 +143,89 @@ def extrair_numero_processo(texto: str):
     return correspondencia.group() if correspondencia else None
 
 
-def trocar_para_iframe(navegador, wait, iframe_id: str) -> None:
+def trocar_para_iframe(
+    navegador,
+    wait,
+    by,
+    valor,
+):
     """
-    Retorna ao conteúdo principal e entra no iframe solicitado.
+    Troca para um iframe usando qualquer estratégia
+    (ID, XPATH, CSS_SELECTOR, NAME...).
     """
+
     navegador.switch_to.default_content()
+
     wait.until(
         EC.frame_to_be_available_and_switch_to_it(
-            (By.ID, iframe_id)
+            (by, valor)
         )
     )
 
+    time.sleep(TEMPO_TROCA_IFRAME)
+
+def aceitar_cookies(navegador, tempo=5) -> bool:
+    """
+    Tenta aceitar o banner de cookies.
+
+    Retorna True quando encontrou e clicou.
+    Retorna False quando o banner não apareceu.
+    """
+    xpaths_possiveis = [
+        "//button[contains(translate(normalize-space(.), "
+        "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+        "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+        "'aceitar todos')]",
+
+        "//button[contains(translate(normalize-space(.), "
+        "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+        "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+        "'aceitar cookies')]",
+
+        "//button[contains(translate(normalize-space(.), "
+        "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+        "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+        "'aceitar')]",
+
+        "//a[contains(translate(normalize-space(.), "
+        "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+        "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+        "'aceitar')]",
+    ]
+
+    navegador.switch_to.default_content()
+
+    for xpath in xpaths_possiveis:
+        try:
+            botao = WebDriverWait(
+                navegador,
+                tempo,
+            ).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, xpath)
+                )
+            )
+
+            print(
+                f"Botão de cookies encontrado: "
+                f"{botao.text.strip()}"
+            )
+
+            clicar_js(
+                navegador,
+                botao,
+            )
+
+            print("Cookies aceitos.")
+            return True
+
+        except TimeoutException:
+            continue
+        except StaleElementReferenceException:
+            continue
+
+    print("Banner de cookies não apareceu.")
+    return False
 
 # ============================================================
 # LOGIN
@@ -172,29 +245,65 @@ class Inicial:
         try:
             navegador.get(URL_PJE)
 
+            navegador.switch_to.default_content()
+
+            # Primeiro tenta localizar os campos diretamente na página principal.
             try:
-                wait.until(
-                    EC.frame_to_be_available_and_switch_to_it(
-                        (By.ID, "ssoFrame")
+                campo_usuario = WebDriverWait(
+                    navegador,
+                    3,
+                ).until(
+                    EC.presence_of_element_located(
+                        (By.ID, "username")
                     )
                 )
-                print("Entrou no iframe de login com sucesso.")
-            except TimeoutException:
-                print(
-                    "Iframe 'ssoFrame' não encontrado. "
-                    "Continuando no conteúdo principal."
+
+                campo_senha = navegador.find_element(
+                    By.ID,
+                    "password"
                 )
 
-            campo_usuario = wait.until(
-                EC.presence_of_element_located(
-                    (By.ID, "username")
+                print("Campos de login encontrados no conteúdo principal.")
+
+            except TimeoutException:
+                print(
+                    "Campos não encontrados no conteúdo principal. "
+                    "Procurando dentro do ssoFrame..."
                 )
-            )
-            campo_senha = wait.until(
-                EC.presence_of_element_located(
-                    (By.ID, "password")
-                )
-            )
+
+                navegador.switch_to.default_content()
+
+                try:
+                    WebDriverWait(
+                        navegador,
+                        5,
+                    ).until(
+                        EC.frame_to_be_available_and_switch_to_it(
+                            (By.ID, "ssoFrame")
+                        )
+                    )
+
+                    campo_usuario = WebDriverWait(
+                        navegador,
+                        5,
+                    ).until(
+                        EC.presence_of_element_located(
+                            (By.ID, "username")
+                        )
+                    )
+
+                    campo_senha = navegador.find_element(
+                        By.ID,
+                        "password"
+                    )
+
+                    print("Campos de login encontrados dentro do ssoFrame.")
+
+                except TimeoutException as erro:
+                    raise RuntimeError(
+                        "Não foi possível localizar os campos de login "
+                        "nem no conteúdo principal nem no ssoFrame."
+                    ) from erro
 
             campo_usuario.clear()
             campo_usuario.send_keys(usuario)
@@ -228,38 +337,38 @@ class Inicial:
         tempo_limite: int = 300,
     ) -> bool:
         """
-        Aguarda até o PJe carregar a tela principal.
-
-        Durante esse período, o usuário pode preencher manualmente
-        o código 2FA na janela do Firefox.
+        Aguarda o preenchimento manual do 2FA, pula a tela opcional
+        do Token PJe quando ela aparecer e confirma a tela principal.
         """
         print(
             "Aguardando a conclusão do login e o preenchimento "
             "manual do código 2FA..."
         )
 
-        def pagina_principal_carregada(driver):
+        def concluir_etapas_login(driver):
             try:
                 driver.switch_to.default_content()
 
-                # Em alguns acessos o PJe exibe uma opção para pular
-                # a verificação mobile. Se ela aparecer, tenta clicar.
-                self._pular_verificacao_mobile(driver)
+                # A tela opcional do Token PJe pode aparecer depois do 2FA.
+                if self._pular_token_pje(driver):
+                    print(
+                        "Opção de pular o Token PJe acionada. "
+                        "Aguardando a tela principal..."
+                    )
+                    return False
 
-                # Elemento do menu de seleção de perfil.
-                menu_perfil = driver.find_elements(
+                # Só confirma quando o menu de perfil estiver visível.
+                menus_perfil = driver.find_elements(
                     By.XPATH,
                     "/html/body/nav/div/div[2]/ul/li/a",
                 )
 
-                # Iframe principal do PJe.
-                iframe_principal = driver.find_elements(
-                    By.ID,
-                    "ngFrame",
-                )
-
-                if menu_perfil or iframe_principal:
-                    return True
+                for menu in menus_perfil:
+                    try:
+                        if menu.is_displayed():
+                            return True
+                    except StaleElementReferenceException:
+                        continue
 
                 return False
 
@@ -271,42 +380,115 @@ class Inicial:
                 navegador,
                 tempo_limite,
                 poll_frequency=1,
-            ).until(pagina_principal_carregada)
+                ignored_exceptions=(
+                    StaleElementReferenceException,
+                ),
+            ).until(concluir_etapas_login)
 
             navegador.switch_to.default_content()
 
             print(
-                "Login e autenticação 2FA concluídos. "
-                "Tela principal do PJe identificada."
+                "Login, 2FA e etapa opcional do Token PJe concluídos."
             )
             return True
 
         except TimeoutException as erro:
             raise TimeoutException(
-                "O tempo para concluir o login e informar o "
-                "código 2FA expirou."
+                "O tempo para concluir o login, informar o 2FA "
+                "e passar pela tela do Token PJe expirou."
             ) from erro
 
     @staticmethod
-    def _pular_verificacao_mobile(navegador) -> None:
-        xpath = (
-            "/html/body/div[5]/div/div/div/div[2]/div/div/"
-            "div/form/div/div[2]/div[4]/a"
-        )
+    def _pular_token_pje(navegador) -> bool:
+        """
+        Procura e aciona a opção de continuar sem o Token PJe.
 
-        try:
+        Retorna True quando encontrou e clicou; caso contrário,
+        retorna False.
+        """
+        navegador.switch_to.default_content()
+
+        xpaths_possiveis = [
+            # Links com texto contendo "pular"
+            (
+                "//a[contains("
+                "translate(normalize-space(.), "
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+                "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+                "'pular'"
+                ")]"
+            ),
+
+            # Botões com texto contendo "pular"
+            (
+                "//button[contains("
+                "translate(normalize-space(.), "
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+                "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+                "'pular'"
+                ")]"
+            ),
+
+            # Continuar sem token
+            (
+                "//*[self::a or self::button]"
+                "[contains("
+                "translate(normalize-space(.), "
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+                "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+                "'sem o token'"
+                ")]"
+            ),
+
+            # Continuar sem usar o Token PJe
+            (
+                "//*[self::a or self::button]"
+                "[contains("
+                "translate(normalize-space(.), "
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+                "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+                "'continuar'"
+                ") and contains("
+                "translate(normalize-space(.), "
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+                "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+                "'token'"
+                ")]"
+            ),
+        ]
+
+        for xpath in xpaths_possiveis:
             elementos = navegador.find_elements(
                 By.XPATH,
                 xpath,
             )
 
-            if elementos and elementos[0].is_displayed():
-                elementos[0].click()
-                print("Verificação mobile ignorada.")
+            for elemento in elementos:
+                try:
+                    if not elemento.is_displayed():
+                        continue
 
-        except Exception:
-            # A ausência desse elemento é normal.
-            pass
+                    print(
+                        "Opção encontrada na tela do Token PJe:",
+                        elemento.text.strip(),
+                    )
+
+                    navegador.execute_script(
+                        "arguments[0].click();",
+                        elemento,
+                    )
+
+                    time.sleep(1)
+                    return True
+
+                except StaleElementReferenceException:
+                    continue
+                except Exception as erro:
+                    print(
+                        f"Não foi possível clicar na opção: {erro}"
+                    )
+
+        return False
 
 
 # ============================================================
@@ -433,7 +615,12 @@ class Tarefa_visualizaDJE:
 
     def abrir_tarefa(self, wait, navegador) -> None:
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
 
         indice = 1
 
@@ -487,32 +674,99 @@ class Tarefa_visualizaDJE:
             indice += 1
 
     def abrir_dje(self, wait, navegador) -> None:
+        # Começa na aba principal do PJe
         trocar_aba(navegador, self.aba_pje)
+
         abas_antes = set(navegador.window_handles)
 
-        navegador.execute_script("window.open('about:blank', '_blank');")
-
-        WebDriverWait(navegador, 15).until(
-            lambda driver: len(set(driver.window_handles) - abas_antes) == 1
+        # Abre uma nova aba vazia
+        navegador.execute_script(
+            "window.open('about:blank', '_blank');"
         )
 
+        # Aguarda a nova aba ser criada
+        WebDriverWait(
+            navegador,
+            15,
+        ).until(
+            lambda driver: len(
+                set(driver.window_handles) - abas_antes
+            ) == 1
+        )
+
+        # Salva o identificador da aba do DJE
         self.aba_dje = (
             set(navegador.window_handles) - abas_antes
         ).pop()
 
+        # Abre o DJE na aba nova
         trocar_aba(navegador, self.aba_dje)
         navegador.get(URL_DJE)
 
-        WebDriverWait(navegador, 30).until(
-            EC.presence_of_element_located(
-                (By.ID, "mat-input-0")
+        # Aguarda a página carregar.
+        # Use um elemento que realmente exista no novo site.
+        WebDriverWait(
+            navegador,
+            30,
+        ).until(
+            lambda driver: (
+                driver.execute_script(
+                    "return document.readyState"
+                ) == "complete"
             )
         )
 
-        print("DJE aberto e mantido em uma aba separada.")
+        # Tenta fechar o banner de cookies
+        aceitar_cookies(
+            navegador,
+            tempo=3,
+        )
 
+        # Entra no iframe do novo DJE
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.CSS_SELECTOR,
+            'iframe[src*="/dje-consulta"]',
+        )
+
+        campo = WebDriverWait(
+            navegador,
+            20,
+        ).until(
+            EC.presence_of_element_located(
+                (By.XPATH, "/html/body/app-root/div/app-calendario/div/div[2]/app-pesquisa/app-pesquisa-form/div/div[5]/button[2]/span")
+            )
+        )
+
+        navegador.execute_script(
+            """
+            arguments[0].scrollIntoView({
+                block: 'center',
+                inline: 'nearest'
+            });
+            """,
+            campo,
+        )
+
+        time.sleep(0.5)
+
+        print("DJE aberto em uma aba separada.")
+
+        # Volta obrigatoriamente para a aba do PJe
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+
+        # Volta ao conteúdo principal antes de entrar no ngFrame
+        navegador.switch_to.default_content()
+
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
+
+        print("Retornou à tarefa no PJe.")
 
     def processar_processos(self, wait, navegador) -> None:
         quantidade = self.obter_quantidade_processos(wait)
@@ -575,7 +829,12 @@ class Tarefa_visualizaDJE:
         indice_lista: int,
     ) -> int:
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
 
         xpath_processo = self.xpath_processo(indice_lista)
 
@@ -634,7 +893,12 @@ class Tarefa_visualizaDJE:
 
     def obter_data_expediente(self, wait, navegador):
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
 
         xpath_abrir_autos = (
             "/html/body/app-root/selector/div/div/div[2]/"
@@ -733,26 +997,41 @@ class Tarefa_visualizaDJE:
         navegador,
         numero_processo: str,
     ):
-        navegador.switch_to.window(self.aba_dje)
+        trocar_aba(
+            navegador,
+            self.aba_dje,
+        )
+
+        navegador.switch_to.default_content()
+
+        # Entra no iframe do novo DJE
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.CSS_SELECTOR,
+            'iframe[src*="/dje-consulta"]',
+        )
+
+        print("Entrou no iframe do DJE.")
 
         data_default = datetime(2001, 5, 17)
 
         xpath_select_tribunal = (
-            "/html/body/app-root/div/app-calendario/div/div[2]/"
-            "app-pesquisa/app-pesquisa-form/div/div[1]/div[1]/"
-            "mat-form-field/div/div[1]/div[3]"
+            '//*[@id="mat-select-1"]/div/div[1]'
         )
         xpath_tre_pb = (
-            "/html/body/div[2]/div[2]/div/div/div/"
-            "mat-option[17]/span"
+            '//*[@id="mat-option-49"]/span'
         )
         xpath_pesquisar = (
-            "/html/body/app-root/div/app-calendario/div/div[2]/"
-            "app-pesquisa/app-pesquisa-form/div/div[5]/button[2]"
+            "//button[.//span[contains("
+            "translate(normalize-space(.), "
+            "'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÀÂÃÉÊÍÓÔÕÚÇ', "
+            "'abcdefghijklmnopqrstuvwxyzáàâãéêíóôõúç'), "
+            "'pesquisar'"
+            ")]]"
         )
         xpath_resultado_data = (
-            "/html/body/app-root/div/app-calendario/div/div[8]/"
-            "button/span"
+            '//*[@id="mat-tab-content-0-0"]/div/div/div[2]/app-card-diario-binario[1]/button/span/div[1]/span[2]/b'
         )
 
         try:
@@ -782,6 +1061,27 @@ class Tarefa_visualizaDJE:
         campo.clear()
         pyperclip.copy(numero_processo)
         campo.send_keys(Keys.CONTROL, "v")
+
+        campo = WebDriverWait(
+            navegador,
+            20,
+        ).until(
+            EC.presence_of_element_located(
+                (By.XPATH, "/html/body/app-root/div/app-calendario/div/div[2]/app-pesquisa/app-pesquisa-form/div/div[5]/button[2]/span")
+            )
+        )
+
+        navegador.execute_script(
+            """
+            arguments[0].scrollIntoView({
+                block: 'center',
+                inline: 'nearest'
+            });
+            """,
+            campo,
+        )
+
+        time.sleep(0.5)
 
         WebDriverWait(navegador, 20).until(
             EC.element_to_be_clickable(
@@ -818,7 +1118,12 @@ class Tarefa_visualizaDJE:
 
     def finalizar_processo(self, wait, navegador) -> None:
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
 
         botao_transicao = wait.until(
             EC.element_to_be_clickable(
@@ -954,7 +1259,8 @@ class Etiqueta_meta2_70:
             trocar_para_iframe(
                 navegador,
                 wait,
-                "ngFrame"
+                By.ID,
+                "ngFrame",
             )
 
             xpath_filtro = (
@@ -1485,7 +1791,12 @@ class ProcJulgado:
 
     def abrir_tarefa(self, wait, navegador) -> None:
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
 
         indice = 1
 
@@ -1603,7 +1914,8 @@ class ProcJulgado:
         trocar_para_iframe(
             navegador,
             wait,
-            "ngFrame"
+            By.ID,
+            "ngFrame",
         )
 
         xpath_processo = self.xpath_processo(
@@ -1690,7 +2002,8 @@ class ProcJulgado:
         trocar_para_iframe(
             navegador,
             wait,
-            "ngFrame"
+            By.ID,
+            "ngFrame",
         )
 
         xpath_abrir_autos = (
@@ -1872,7 +2185,12 @@ class ProcJulgado:
     
     def finalizar_processo(self, wait, navegador) -> None:
         trocar_aba(navegador, self.aba_pje)
-        trocar_para_iframe(navegador, wait, "ngFrame")
+        trocar_para_iframe(
+            navegador,
+            wait,
+            By.ID,
+            "ngFrame",
+        )
 
         botao_transicao = wait.until(
             EC.element_to_be_clickable(
