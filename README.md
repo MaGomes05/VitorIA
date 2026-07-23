@@ -184,17 +184,6 @@ python main.py
 
 ---
 
-# Futuras melhorias
-
-- [ ] Sistema de atualização automática
-- [ ] Configuração de perfis pela interface
-- [ ] Gerenciamento de tarefas pela interface
-- [ ] Relatórios de execução
-- [ ] Logs detalhados
-- [ ] Empacotamento completo em executável
-
----
-
 # Autor
 
 **Maria Antonia de Paula Gomes**

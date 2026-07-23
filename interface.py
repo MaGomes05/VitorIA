@@ -8,8 +8,11 @@ from tkinter import messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from tarefas import Inicial, ProcJulgado, Tarefa_visualizaDJE
-
+from tarefas import (
+    Inicial,
+    ProcJulgado,
+    Tarefa_visualizaDJE,
+)
 
 def caminho_recurso(nome_arquivo: str) -> str:
     if getattr(sys, "frozen", False):
@@ -114,7 +117,7 @@ class Interface:
         cabecalho.pack(fill="x")
 
         try:
-            imagem = Image.open(caminho_recurso("logo2.jpg"))
+            imagem = Image.open(caminho_recurso("assets/logo2.jpg"))
             imagem.thumbnail((85, 85))
             self.imagem_logo = ImageTk.PhotoImage(imagem)
 
