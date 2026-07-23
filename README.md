@@ -106,18 +106,28 @@ Automação destinada à conferência da movimentação processual para identifi
 - GeckoDriver
 - Tkinter
 - Pillow
+- OpenPyXL
 - Pyperclip
 
 ---
 
 # Estrutura do projeto
 
-```
+```text
 VitorIA/
 │
-├── interface.py          # Interface gráfica
-├── tarefas.py            # Implementação das automações
-├── main.py               # Inicialização do sistema
+├── tarefas/
+│   ├── __init__.py
+│   ├── login.py
+│   ├── visualizar_dje.py
+│   ├── processo_julgado.py
+│   ├── meta_02.py
+│   └── baixa_definitiva.py
+│
+├── config.py
+├── utilitarios.py
+├── interface.py
+├── main.py
 ├── geckodriver.exe
 ├── logo2.jpg
 ├── requirements.txt
@@ -126,14 +136,57 @@ VitorIA/
 
 ---
 
-# Como funciona
+# Como utilizar
 
-1. O usuário informa login e senha do PJe.
-2. O Firefox é iniciado automaticamente.
-3. Caso solicitado, o usuário informa manualmente o código de autenticação em dois fatores (2FA).
-4. O sistema aguarda a conclusão da autenticação.
-5. O usuário escolhe uma das tarefas disponíveis.
-6. A automação é executada até sua conclusão.
+## 1. Inicie a aplicação
+
+Execute o arquivo **VitórIA.exe** ou execute o projeto através do Python:
+
+```bash
+python main.py
+```
+
+---
+
+## 2. Informe suas credenciais
+
+Na interface da aplicação, informe:
+
+- Usuário do **PJe 2º Grau do TRE-PB**
+- Senha
+
+Em seguida clique em **Entrar**.
+
+---
+
+## 3. Realize a autenticação em dois fatores (2FA)
+
+Após clicar em **Entrar**, o Firefox será aberto automaticamente.
+
+Quando solicitado pelo PJe:
+
+- informe manualmente o código de autenticação (2FA);
+- conclua normalmente a autenticação.
+
+A automação aguardará automaticamente essa etapa.
+
+---
+
+## 4. Token PJe
+
+Em alguns acessos, após a validação do 2FA, o PJe apresenta a tela **"Prosseguir sem o Token"**.
+
+Quando essa tela for exibida, a automação realizará esse procedimento automaticamente.
+
+Após o carregamento da tela principal do PJe, as tarefas disponíveis serão habilitadas na interface.
+
+---
+
+## 5. Execute uma tarefa
+
+Clique na tarefa desejada.
+
+Durante a execução da automação, o navegador será controlado automaticamente até a conclusão da rotina.
 
 ---
 
@@ -177,10 +230,12 @@ python main.py
 # Observações
 
 - O login utiliza autenticação em dois fatores (2FA).
-- O código do 2FA é informado manualmente pelo usuário.
-- O sistema aguarda automaticamente a conclusão da autenticação antes de liberar as tarefas.
+- O código do 2FA deve ser informado manualmente pelo usuário.
+- A automação aguarda automaticamente a conclusão da autenticação antes de habilitar as tarefas.
+- Caso seja apresentada a tela **"PJe Mobile"**, ela será tratada automaticamente pela aplicação.
+- Não utilize a janela do Firefox enquanto uma automação estiver em execução.
 - Algumas automações utilizam múltiplas abas e iframes para consulta de informações no PJe e no DJE.
-- O projeto foi desenvolvido visando reduzir atividades repetitivas e minimizar erros operacionais.
+- Alterações na interface do PJe ou do DJE podem exigir atualização da automação.
 
 ---
 
